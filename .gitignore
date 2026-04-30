@@ -1,0 +1,29 @@
+# ── CMake / Emscripten build output ──────────────────────────────────────────
+build/
+*.o
+*.a
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# ── Node / Vite ───────────────────────────────────────────────────────────────
+node_modules/
+web/dist/
+
+# ── OS artifacts ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor / IDE ─────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ── Emsdk (installed outside the project) ────────────────────────────────────
+emsdk/
+
+# NOTE: web/src/wasm/*.js and *.wasm ARE tracked.
+# The GitHub Actions workflow re-uses the committed WASM to build via Vite.
+# Recompiling from C++ in CI would require Emscripten, which we skip.
