@@ -145,21 +145,22 @@ const ViewerCanvas: React.FC<ViewerCanvasProps> = ({ onEngineReady }) => {
     isDraggingRef.current = false;
   }, []);
 
-  // ── Scroll zoom ───────────────────────────────────────────────────────────
-  const handleWheel = useCallback((event: React.WheelEvent) => {
-    event.preventDefault();
-    if (!engineRef.current) return;
+  // ── Scroll zoom (non-passive to allow preventDefault) ───────────────────
+  // React's synthetic onWheel is passive in React 17+, which prevents
+  // calling preventDefault(). We attach a native listener instead.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    // Normalize scroll delta: trackpad gestures produce small values,
-    // mouse wheels produce large ones. We cap at ±10 to prevent jumping.
-    const normalizedDelta = Math.max(-10, Math.min(10, event.deltaY * 0.01));
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (!engineRef.current) return;
+      const normalizedDelta = Math.max(-10, Math.min(10, event.deltaY * 0.01));
+      engineRef.current.ccall('engine_on_mouse_scroll', null, ['number'], [normalizedDelta]);
+    };
 
-    engineRef.current.ccall(
-      'engine_on_mouse_scroll',
-      null,
-      ['number'],
-      [normalizedDelta]
-    );
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
   }, []);
 
   // ── Touch support ─────────────────────────────────────────────────────────
@@ -211,7 +212,6 @@ const ViewerCanvas: React.FC<ViewerCanvasProps> = ({ onEngineReady }) => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
