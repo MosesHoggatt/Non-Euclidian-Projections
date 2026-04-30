@@ -1,5 +1,5 @@
 #include "Shader.h"
-#include <stdexcept>
+#include <cstdio>
 #include <vector>
 #include <string>
 
@@ -28,10 +28,11 @@ Shader::Shader(const std::string& vertexShaderSource,
     if (linkStatus == GL_FALSE) {
         GLint logLength = 0;
         glGetProgramiv(m_programId, GL_INFO_LOG_LENGTH, &logLength);
-        std::vector<char> log(static_cast<size_t>(logLength));
+        std::vector<char> log(static_cast<size_t>(logLength + 1));
         glGetProgramInfoLog(m_programId, logLength, nullptr, log.data());
+        printf("[Shader] Link failed: %s\n", log.data());
         glDeleteProgram(m_programId);
-        throw std::runtime_error("Shader program link failed:\n" + std::string(log.data()));
+        m_programId = 0;
     }
 }
 
@@ -102,12 +103,12 @@ GLuint Shader::compileShaderStage(GLenum shaderType, const std::string& source) 
     if (compileStatus == GL_FALSE) {
         GLint logLength = 0;
         glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, &logLength);
-        std::vector<char> log(static_cast<size_t>(logLength));
+        std::vector<char> log(static_cast<size_t>(logLength + 1));
         glGetShaderInfoLog(shaderId, logLength, nullptr, log.data());
         glDeleteShader(shaderId);
-
-        std::string stageLabel = (shaderType == GL_VERTEX_SHADER) ? "vertex" : "fragment";
-        throw std::runtime_error("Shader compile failed (" + stageLabel + "):\n" + std::string(log.data()));
+        const char* stageLabel = (shaderType == GL_VERTEX_SHADER) ? "vertex" : "fragment";
+        printf("[Shader] Compile failed (%s): %s\n", stageLabel, log.data());
+        return 0;
     }
 
     return shaderId;

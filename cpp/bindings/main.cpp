@@ -48,99 +48,71 @@
 // The vertex shader receives interleaved position/normal/uv data and forwards
 // the world-space normal and UV to the fragment shader for lighting + projection display.
 
-static const char* VERTEX_SHADER_SOURCE = R"GLSL(
-#version 300 es
-precision highp float;
+static const char* VERTEX_SHADER_SOURCE =
+"#version 300 es\n"
+"precision highp float;\n"
+"layout(location = 0) in vec3 vertexPosition;\n"
+"layout(location = 1) in vec3 vertexNormal;\n"
+"layout(location = 2) in vec2 vertexUV;\n"
+"uniform mat4 modelMatrix;\n"
+"uniform mat4 viewMatrix;\n"
+"uniform mat4 projectionMatrix;\n"
+"uniform mat3 normalMatrix;\n"
+"out vec3 worldNormal;\n"
+"out vec3 worldPosition;\n"
+"out vec2 uv;\n"
+"void main() {\n"
+"    vec4 worldPos = modelMatrix * vec4(vertexPosition, 1.0);\n"
+"    worldPosition = worldPos.xyz;\n"
+"    worldNormal   = normalize(normalMatrix * vertexNormal);\n"
+"    uv            = vertexUV;\n"
+"    gl_Position   = projectionMatrix * viewMatrix * worldPos;\n"
+"}";
 
-// Per-vertex inputs (match the Mesh interleaved layout)
-layout(location = 0) in vec3 vertexPosition;
-layout(location = 1) in vec3 vertexNormal;
-layout(location = 2) in vec2 vertexUV;
-
-// Transformation matrices — set once per frame from C++
-uniform mat4 modelMatrix;
-uniform mat4 viewMatrix;
-uniform mat4 projectionMatrix;
-// Normal matrix: transpose of inverse of model matrix upper-left 3x3.
-// Transforms normals correctly even when the model is non-uniformly scaled.
-uniform mat3 normalMatrix;
-
-// Outputs to the fragment shader
-out vec3 worldNormal;
-out vec3 worldPosition;
-out vec2 uv;
-
-void main() {
-    vec4 worldPos = modelMatrix * vec4(vertexPosition, 1.0);
-    worldPosition = worldPos.xyz;
-    worldNormal   = normalize(normalMatrix * vertexNormal);
-    uv            = vertexUV;
-    gl_Position   = projectionMatrix * viewMatrix * worldPos;
-}
-)GLSL";
-
-static const char* FRAGMENT_SHADER_SOURCE = R"GLSL(
-#version 300 es
-precision highp float;
-
-in vec3 worldNormal;
-in vec3 worldPosition;
-in vec2 uv;
-
-// Lighting uniforms
-uniform vec3 lightDirection;     // world-space direction toward the light (normalized)
-uniform vec3 lightColor;
-uniform vec3 ambientColor;
-uniform vec3 objectColor;
-uniform float shininess;
-
-// Camera position for specular highlight calculation
-uniform vec3 cameraWorldPosition;
-
-out vec4 fragmentColor;
-
-void main() {
-    vec3 normal   = normalize(worldNormal);
-    vec3 toLight  = normalize(lightDirection);
-    vec3 toCamera = normalize(cameraWorldPosition - worldPosition);
-
-    // ── Diffuse (Lambertian) ──────────────────────────────────────────────────
-    float diffuseStrength = max(dot(normal, toLight), 0.0);
-    vec3  diffuse         = diffuseStrength * lightColor;
-
-    // ── Specular (Blinn-Phong) ────────────────────────────────────────────────
-    vec3  halfwayVector    = normalize(toLight + toCamera);
-    float specularStrength = pow(max(dot(normal, halfwayVector), 0.0), shininess);
-    vec3  specular         = specularStrength * lightColor * 0.4;
-
-    // ── Final color ───────────────────────────────────────────────────────────
-    vec3 lighting = ambientColor + diffuse + specular;
-    fragmentColor = vec4(objectColor * lighting, 1.0);
-}
-)GLSL";
+static const char* FRAGMENT_SHADER_SOURCE =
+"#version 300 es\n"
+"precision highp float;\n"
+"in vec3 worldNormal;\n"
+"in vec3 worldPosition;\n"
+"in vec2 uv;\n"
+"uniform vec3 lightDirection;\n"
+"uniform vec3 lightColor;\n"
+"uniform vec3 ambientColor;\n"
+"uniform vec3 objectColor;\n"
+"uniform float shininess;\n"
+"uniform vec3 cameraWorldPosition;\n"
+"out vec4 fragmentColor;\n"
+"void main() {\n"
+"    vec3 normal   = normalize(worldNormal);\n"
+"    vec3 toLight  = normalize(lightDirection);\n"
+"    vec3 toCamera = normalize(cameraWorldPosition - worldPosition);\n"
+"    float diffuseStrength = max(dot(normal, toLight), 0.0);\n"
+"    vec3  diffuse         = diffuseStrength * lightColor;\n"
+"    vec3  halfwayVector    = normalize(toLight + toCamera);\n"
+"    float specularStrength = pow(max(dot(normal, halfwayVector), 0.0), shininess);\n"
+"    vec3  specular         = specularStrength * lightColor * 0.4;\n"
+"    vec3 lighting = ambientColor + diffuse + specular;\n"
+"    fragmentColor = vec4(objectColor * lighting, 1.0);\n"
+"}";
 
 // Wireframe overlay uses a simpler single-color shader
-static const char* WIREFRAME_VERTEX_SHADER_SOURCE = R"GLSL(
-#version 300 es
-precision highp float;
-layout(location = 0) in vec3 vertexPosition;
-uniform mat4 modelMatrix;
-uniform mat4 viewMatrix;
-uniform mat4 projectionMatrix;
-void main() {
-    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(vertexPosition, 1.0);
-}
-)GLSL";
+static const char* WIREFRAME_VERTEX_SHADER_SOURCE =
+"#version 300 es\n"
+"precision highp float;\n"
+"layout(location = 0) in vec3 vertexPosition;\n"
+"uniform mat4 modelMatrix;\n"
+"uniform mat4 viewMatrix;\n"
+"uniform mat4 projectionMatrix;\n"
+"void main() {\n"
+"    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(vertexPosition, 1.0);\n"
+"}";
 
-static const char* WIREFRAME_FRAGMENT_SHADER_SOURCE = R"GLSL(
-#version 300 es
-precision highp float;
-uniform vec4 wireframeColor;
-out vec4 fragmentColor;
-void main() {
-    fragmentColor = wireframeColor;
-}
-)GLSL";
+static const char* WIREFRAME_FRAGMENT_SHADER_SOURCE =
+"#version 300 es\n"
+"precision highp float;\n"
+"uniform vec4 wireframeColor;\n"
+"out vec4 fragmentColor;\n"
+"void main() { fragmentColor = wireframeColor; }";
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Engine state — kept in a plain struct so all callbacks can access it.
@@ -513,11 +485,11 @@ int engine_initialize(int canvasWidth, int canvasHeight) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // ── Compile shaders ───────────────────────────────────────────────────────
-    try {
-        gEngine->surfaceShader   = std::make_unique<Shader>(VERTEX_SHADER_SOURCE,   FRAGMENT_SHADER_SOURCE);
-        gEngine->wireframeShader = std::make_unique<Shader>(WIREFRAME_VERTEX_SHADER_SOURCE, WIREFRAME_FRAGMENT_SHADER_SOURCE);
-    } catch (const std::exception& e) {
-        printf("[Engine] Shader compile error: %s\n", e.what());
+    gEngine->surfaceShader   = std::make_unique<Shader>(VERTEX_SHADER_SOURCE,   FRAGMENT_SHADER_SOURCE);
+    gEngine->wireframeShader = std::make_unique<Shader>(WIREFRAME_VERTEX_SHADER_SOURCE, WIREFRAME_FRAGMENT_SHADER_SOURCE);
+
+    if (gEngine->surfaceShader->programId() == 0 || gEngine->wireframeShader->programId() == 0) {
+        printf("[Engine] ERROR: Shader compilation failed (see messages above).\n");
         return 0;
     }
 
