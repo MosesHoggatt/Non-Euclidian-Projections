@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useRef } from 'react';
 import ViewerCanvas from './components/ViewerCanvas';
-import ProjectionSelector, { ProjectionId } from './components/ProjectionSelector';
-import ParameterPanel, { EngineParameters } from './components/ParameterPanel';
+import ProjectionSelector from './components/ProjectionSelector';
+import type { ProjectionId } from './components/ProjectionSelector';
+import ParameterPanel from './components/ParameterPanel';
+import type { EngineParameters } from './components/ParameterPanel';
 import type { ProjectionEngineModule } from './wasm/projection_engine';
 
 // ─────────────────────────────────────────────────────────────────────────────
