@@ -29,8 +29,8 @@ void Camera::orbitByPixelDelta(float deltaX, float deltaY) {
     // Horizontal drag rotates azimuth (left/right around the Y axis)
     m_azimuthAngle -= deltaX * ORBIT_SENSITIVITY;
 
-    // Vertical drag rotates elevation (up/down). Subtract because screen Y is inverted.
-    m_elevationAngle -= deltaY * ORBIT_SENSITIVITY;
+    // Vertical drag rotates elevation (up/down).
+    m_elevationAngle += deltaY * ORBIT_SENSITIVITY;
 
     // Clamp elevation to prevent gimbal flip at the poles
     m_elevationAngle = MathConstants::clamp(
@@ -41,8 +41,8 @@ void Camera::orbitByPixelDelta(float deltaX, float deltaY) {
 }
 
 void Camera::zoomByScrollDelta(float deltaY) {
-    // Negative delta scrolls toward the scene (zoom in), positive zooms out
-    m_orbitRadius -= deltaY * ZOOM_SENSITIVITY;
+    // Positive delta scrolls toward the scene (zoom in), negative zooms out
+    m_orbitRadius += deltaY * ZOOM_SENSITIVITY;
     m_orbitRadius = MathConstants::clamp(m_orbitRadius, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS);
 }
 
