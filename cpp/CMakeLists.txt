@@ -43,6 +43,10 @@ if (EMSCRIPTEN)
         "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap"
         # Allow memory growth for large meshes
         "-sALLOW_MEMORY_GROWTH=1"
+        # Enable C++ exception catching (disabled by default in Emscripten).
+        # The Shader class throws std::runtime_error on GLSL compile failure;
+        # without this the abort handler fires instead of the C++ catch block.
+        "-sDISABLE_EXCEPTION_CATCHING=0"
         # Output a clean ES module glue file
         "-sMODULARIZE=1"
         "-sEXPORT_NAME=createProjectionEngine"

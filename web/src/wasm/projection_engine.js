@@ -278,10 +278,6 @@ function assert(condition, text) {
 
 // We used to include malloc/free by default in the past. Show a helpful error in
 // builds with assertions.
-function _free() {
-  // Show a helpful error since we used to include free by default in the past.
-  abort('free() called but not included in the build - add `_free` to EXPORTED_FUNCTIONS');
-}
 
 /**
  * Indicates whether filename is delivered via file protocol (as opposed to http/https)
@@ -330,9 +326,19 @@ function checkStackCookie() {
 // end include: runtime_stack_check.js
 // include: runtime_exceptions.js
 // Base Emscripten EH error class
-class EmscriptenEH {}
+class EmscriptenEH extends Error {}
 
 class EmscriptenSjLj extends EmscriptenEH {}
+
+class CppException extends EmscriptenEH {
+  constructor(excPtr) {
+    super(excPtr);
+    this.excPtr = excPtr;
+    const excInfo = getExceptionMessage(this);
+    this.name = excInfo[0];
+    this.message = excInfo[1];
+  }
+}
 
 // end include: runtime_exceptions.js
 // include: runtime_debug.js
@@ -820,6 +826,103 @@ async function createWasm() {
 
   
 
+  var UTF8Decoder = globalThis.TextDecoder && new TextDecoder();
+  
+  var findStringEnd = (heapOrArray, idx, maxBytesToRead, ignoreNul) => {
+      var maxIdx = idx + maxBytesToRead;
+      if (ignoreNul) return maxIdx;
+      // TextDecoder needs to know the byte length in advance, it doesn't stop on
+      // null terminator by itself.
+      // As a tiny code save trick, compare idx against maxIdx using a negation,
+      // so that maxBytesToRead=undefined/NaN means Infinity.
+      while (heapOrArray[idx] && !(idx >= maxIdx)) ++idx;
+      return idx;
+    };
+  
+  
+    /**
+   * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
+   * array that contains uint8 values, returns a copy of that string as a
+   * Javascript String object.
+   * heapOrArray is either a regular array, or a JavaScript typed array view.
+   * @param {number=} idx
+   * @param {number=} maxBytesToRead
+   * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
+   * @return {string}
+   */
+  var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead, ignoreNul) => {
+  
+      var endPtr = findStringEnd(heapOrArray, idx, maxBytesToRead, ignoreNul);
+  
+      // When using conditional TextDecoder, skip it for short strings as the overhead of the native call is not worth it.
+      if (endPtr - idx > 16 && heapOrArray.buffer && UTF8Decoder) {
+        return UTF8Decoder.decode(heapOrArray.subarray(idx, endPtr));
+      }
+      var str = '';
+      while (idx < endPtr) {
+        // For UTF8 byte structure, see:
+        // http://en.wikipedia.org/wiki/UTF-8#Description
+        // https://www.ietf.org/rfc/rfc2279.txt
+        // https://tools.ietf.org/html/rfc3629
+        var u0 = heapOrArray[idx++];
+        if (!(u0 & 0x80)) { str += String.fromCharCode(u0); continue; }
+        var u1 = heapOrArray[idx++] & 63;
+        if ((u0 & 0xE0) == 0xC0) { str += String.fromCharCode(((u0 & 31) << 6) | u1); continue; }
+        var u2 = heapOrArray[idx++] & 63;
+        if ((u0 & 0xF0) == 0xE0) {
+          u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
+        } else {
+          if ((u0 & 0xF8) != 0xF0) warnOnce(`Invalid UTF-8 leading byte ${ptrToString(u0)} encountered when deserializing a UTF-8 string in wasm memory to a JS string!`);
+          u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (heapOrArray[idx++] & 63);
+        }
+  
+        if (u0 < 0x10000) {
+          str += String.fromCharCode(u0);
+        } else {
+          var ch = u0 - 0x10000;
+          str += String.fromCharCode(0xD800 | (ch >> 10), 0xDC00 | (ch & 0x3FF));
+        }
+      }
+      return str;
+    };
+  
+    /**
+   * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
+   * emscripten HEAP, returns a copy of that string as a Javascript String object.
+   *
+   * @param {number} ptr
+   * @param {number=} maxBytesToRead - An optional length that specifies the
+   *   maximum number of bytes to read. You can omit this parameter to scan the
+   *   string until the first 0 byte. If maxBytesToRead is passed, and the string
+   *   at [ptr, ptr+maxBytesToReadr[ contains a null byte in the middle, then the
+   *   string will cut short at that byte index.
+   * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
+   * @return {string}
+   */
+  var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => {
+      assert(typeof ptr == 'number', `UTF8ToString expects a number (got ${typeof ptr})`);
+      return ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead, ignoreNul) : '';
+    };
+  var ___assert_fail = (condition, filename, line, func) =>
+      abort(`Assertion failed: ${UTF8ToString(condition)}, at: ` + [filename ? UTF8ToString(filename) : 'unknown filename', line, func ? UTF8ToString(func) : 'unknown function']);
+
+  var exceptionCaught =  [];
+  
+  
+  var uncaughtExceptionCount = 0;
+  var ___cxa_begin_catch = (ptr) => {
+      var info = new ExceptionInfo(ptr);
+      if (!info.get_caught()) {
+        info.set_caught(true);
+        uncaughtExceptionCount--;
+      }
+      info.set_rethrown(false);
+      exceptionCaught.push(info);
+      return ___cxa_get_exception_ptr(ptr);
+    };
+
+  var exceptionLast = null;
+  
   class ExceptionInfo {
       // excPtr - Thrown object pointer to wrap. Metadata pointer is calculated from it.
       constructor(excPtr) {
@@ -877,13 +980,94 @@ async function createWasm() {
       }
     }
   
-  var uncaughtExceptionCount = 0;
+  
+  var setTempRet0 = (val) => __emscripten_tempret_set(val);
+  var findMatchingCatch = (args) => {
+      var thrown = exceptionLast?.excPtr;
+      if (!thrown) {
+        // just pass through the null ptr
+        setTempRet0(0);
+        return 0;
+      }
+      var info = new ExceptionInfo(thrown);
+      info.set_adjusted_ptr(thrown);
+      var thrownType = info.get_type();
+      if (!thrownType) {
+        // just pass through the thrown ptr
+        setTempRet0(0);
+        return thrown;
+      }
+  
+      // can_catch receives a **, add indirection
+      // The different catch blocks are denoted by different types.
+      // Due to inheritance, those types may not precisely match the
+      // type of the thrown object. Find one which matches, and
+      // return the type of the catch block which should be called.
+      for (var caughtType of args) {
+        if (caughtType === 0 || caughtType === thrownType) {
+          // Catch all clause matched or exactly the same type is caught
+          break;
+        }
+        var adjusted_ptr_addr = info.ptr + 16;
+        if (___cxa_can_catch(caughtType, thrownType, adjusted_ptr_addr)) {
+          setTempRet0(caughtType);
+          return thrown;
+        }
+      }
+      setTempRet0(thrownType);
+      return thrown;
+    };
+  var ___cxa_find_matching_catch_2 = () => findMatchingCatch([]);
+
+  var ___cxa_find_matching_catch_3 = (arg0) => findMatchingCatch([arg0]);
+
+  
+  
+  
+  
+  
+  
+  
+  
+  var stackAlloc = (sz) => __emscripten_stack_alloc(sz);
+  
+  var getExceptionMessageCommon = (ptr) => {
+      var sp = stackSave();
+      var type_addr_addr = stackAlloc(4);
+      var message_addr_addr = stackAlloc(4);
+      ___get_exception_message(ptr, type_addr_addr, message_addr_addr);
+      var type_addr = HEAPU32[((type_addr_addr)>>2)];
+      var message_addr = HEAPU32[((message_addr_addr)>>2)];
+      var type = UTF8ToString(type_addr);
+      _free(type_addr);
+      var message;
+      if (message_addr) {
+        message = UTF8ToString(message_addr);
+        _free(message_addr);
+      }
+      stackRestore(sp);
+      return [type, message];
+    };
+  var getExceptionMessage = (exn) => getExceptionMessageCommon(exn.excPtr);
+  
+  var decrementExceptionRefcount = (exn) => ___cxa_decrement_exception_refcount(exn.excPtr);
+  
+  var incrementExceptionRefcount = (exn) => ___cxa_increment_exception_refcount(exn.excPtr);
   var ___cxa_throw = (ptr, type, destructor) => {
       var info = new ExceptionInfo(ptr);
       // Initialize ExceptionInfo content after it was allocated in __cxa_allocate_exception.
       info.init(type, destructor);
+      ___cxa_increment_exception_refcount(ptr);
+      exceptionLast = new CppException(ptr);
       uncaughtExceptionCount++;
-      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
+      throw exceptionLast;
+    };
+
+  var ___resumeException = (ptr) => {
+      if (!exceptionLast) {
+        exceptionLast = new CppException(ptr);
+      }
+      throw exceptionLast;
     };
 
   var __abort_js = () =>
@@ -1415,83 +1599,6 @@ async function createWasm() {
     };
   
   
-  var UTF8Decoder = globalThis.TextDecoder && new TextDecoder();
-  
-  var findStringEnd = (heapOrArray, idx, maxBytesToRead, ignoreNul) => {
-      var maxIdx = idx + maxBytesToRead;
-      if (ignoreNul) return maxIdx;
-      // TextDecoder needs to know the byte length in advance, it doesn't stop on
-      // null terminator by itself.
-      // As a tiny code save trick, compare idx against maxIdx using a negation,
-      // so that maxBytesToRead=undefined/NaN means Infinity.
-      while (heapOrArray[idx] && !(idx >= maxIdx)) ++idx;
-      return idx;
-    };
-  
-  
-    /**
-   * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
-   * array that contains uint8 values, returns a copy of that string as a
-   * Javascript String object.
-   * heapOrArray is either a regular array, or a JavaScript typed array view.
-   * @param {number=} idx
-   * @param {number=} maxBytesToRead
-   * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
-   * @return {string}
-   */
-  var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead, ignoreNul) => {
-  
-      var endPtr = findStringEnd(heapOrArray, idx, maxBytesToRead, ignoreNul);
-  
-      // When using conditional TextDecoder, skip it for short strings as the overhead of the native call is not worth it.
-      if (endPtr - idx > 16 && heapOrArray.buffer && UTF8Decoder) {
-        return UTF8Decoder.decode(heapOrArray.subarray(idx, endPtr));
-      }
-      var str = '';
-      while (idx < endPtr) {
-        // For UTF8 byte structure, see:
-        // http://en.wikipedia.org/wiki/UTF-8#Description
-        // https://www.ietf.org/rfc/rfc2279.txt
-        // https://tools.ietf.org/html/rfc3629
-        var u0 = heapOrArray[idx++];
-        if (!(u0 & 0x80)) { str += String.fromCharCode(u0); continue; }
-        var u1 = heapOrArray[idx++] & 63;
-        if ((u0 & 0xE0) == 0xC0) { str += String.fromCharCode(((u0 & 31) << 6) | u1); continue; }
-        var u2 = heapOrArray[idx++] & 63;
-        if ((u0 & 0xF0) == 0xE0) {
-          u0 = ((u0 & 15) << 12) | (u1 << 6) | u2;
-        } else {
-          if ((u0 & 0xF8) != 0xF0) warnOnce(`Invalid UTF-8 leading byte ${ptrToString(u0)} encountered when deserializing a UTF-8 string in wasm memory to a JS string!`);
-          u0 = ((u0 & 7) << 18) | (u1 << 12) | (u2 << 6) | (heapOrArray[idx++] & 63);
-        }
-  
-        if (u0 < 0x10000) {
-          str += String.fromCharCode(u0);
-        } else {
-          var ch = u0 - 0x10000;
-          str += String.fromCharCode(0xD800 | (ch >> 10), 0xDC00 | (ch & 0x3FF));
-        }
-      }
-      return str;
-    };
-  
-    /**
-   * Given a pointer 'ptr' to a null-terminated UTF8-encoded string in the
-   * emscripten HEAP, returns a copy of that string as a Javascript String object.
-   *
-   * @param {number} ptr
-   * @param {number=} maxBytesToRead - An optional length that specifies the
-   *   maximum number of bytes to read. You can omit this parameter to scan the
-   *   string until the first 0 byte. If maxBytesToRead is passed, and the string
-   *   at [ptr, ptr+maxBytesToReadr[ contains a null byte in the middle, then the
-   *   string will cut short at that byte index.
-   * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
-   * @return {string}
-   */
-  var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => {
-      assert(typeof ptr == 'number', `UTF8ToString expects a number (got ${typeof ptr})`);
-      return ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead, ignoreNul) : '';
-    };
   var GL = {
   counter:1,
   buffers:[],
@@ -2612,6 +2719,7 @@ async function createWasm() {
 
 
 
+
   var getCFunc = (ident) => {
       var func = Module['_' + ident]; // closure exported function
       assert(func, `Cannot call unknown function ${ident}, make sure it is exported`);
@@ -2645,7 +2753,6 @@ async function createWasm() {
     };
   
   
-  var stackAlloc = (sz) => __emscripten_stack_alloc(sz);
   var stringToUTF8OnStack = (str) => {
       var size = lengthBytesUTF8(str) + 1;
       var ret = stackAlloc(size);
@@ -2801,7 +2908,6 @@ Module['FS_createPreloadedFile'] = FS.createPreloadedFile;
   'convertI32PairToI53Checked',
   'convertU32PairToI53',
   'getTempRet0',
-  'setTempRet0',
   'createNamedFunction',
   'zeroMemory',
   'withStackSave',
@@ -2907,7 +3013,6 @@ Module['FS_createPreloadedFile'] = FS.createPreloadedFile;
   'makePromise',
   'idsToPromises',
   'makePromiseCallback',
-  'findMatchingCatch',
   'incrementUncaughtExceptionCount',
   'decrementUncaughtExceptionCount',
   'Browser_asyncPrepareDataCounter',
@@ -2978,6 +3083,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'stackSave',
   'stackRestore',
   'stackAlloc',
+  'setTempRet0',
   'ptrToString',
   'exitJS',
   'getHeapMax',
@@ -3032,8 +3138,14 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'registerPreMainLoop',
   'promiseMap',
   'uncaughtExceptionCount',
+  'exceptionLast',
   'exceptionCaught',
   'ExceptionInfo',
+  'findMatchingCatch',
+  'getExceptionMessageCommon',
+  'incrementExceptionRefcount',
+  'decrementExceptionRefcount',
+  'getExceptionMessage',
   'Browser',
   'requestFullscreen',
   'requestFullScreen',
@@ -3223,11 +3335,19 @@ var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_en
 var _emscripten_stack_get_base = makeInvalidEarlyAccess('_emscripten_stack_get_base');
 var _strerror = makeInvalidEarlyAccess('_strerror');
 var _malloc = makeInvalidEarlyAccess('_malloc');
+var _free = makeInvalidEarlyAccess('_free');
+var _setThrew = makeInvalidEarlyAccess('_setThrew');
+var __emscripten_tempret_set = makeInvalidEarlyAccess('__emscripten_tempret_set');
 var _emscripten_stack_init = makeInvalidEarlyAccess('_emscripten_stack_init');
 var _emscripten_stack_get_free = makeInvalidEarlyAccess('_emscripten_stack_get_free');
 var __emscripten_stack_restore = makeInvalidEarlyAccess('__emscripten_stack_restore');
 var __emscripten_stack_alloc = makeInvalidEarlyAccess('__emscripten_stack_alloc');
 var _emscripten_stack_get_current = makeInvalidEarlyAccess('_emscripten_stack_get_current');
+var ___cxa_increment_exception_refcount = makeInvalidEarlyAccess('___cxa_increment_exception_refcount');
+var ___cxa_decrement_exception_refcount = makeInvalidEarlyAccess('___cxa_decrement_exception_refcount');
+var ___get_exception_message = makeInvalidEarlyAccess('___get_exception_message');
+var ___cxa_can_catch = makeInvalidEarlyAccess('___cxa_can_catch');
+var ___cxa_get_exception_ptr = makeInvalidEarlyAccess('___cxa_get_exception_ptr');
 var memory = makeInvalidEarlyAccess('memory');
 var __indirect_function_table = makeInvalidEarlyAccess('__indirect_function_table');
 var wasmMemory = makeInvalidEarlyAccess('wasmMemory');
@@ -3248,11 +3368,19 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['emscripten_stack_get_base'] != 'undefined', 'missing Wasm export: emscripten_stack_get_base');
   assert(typeof wasmExports['strerror'] != 'undefined', 'missing Wasm export: strerror');
   assert(typeof wasmExports['malloc'] != 'undefined', 'missing Wasm export: malloc');
+  assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
+  assert(typeof wasmExports['setThrew'] != 'undefined', 'missing Wasm export: setThrew');
+  assert(typeof wasmExports['_emscripten_tempret_set'] != 'undefined', 'missing Wasm export: _emscripten_tempret_set');
   assert(typeof wasmExports['emscripten_stack_init'] != 'undefined', 'missing Wasm export: emscripten_stack_init');
   assert(typeof wasmExports['emscripten_stack_get_free'] != 'undefined', 'missing Wasm export: emscripten_stack_get_free');
   assert(typeof wasmExports['_emscripten_stack_restore'] != 'undefined', 'missing Wasm export: _emscripten_stack_restore');
   assert(typeof wasmExports['_emscripten_stack_alloc'] != 'undefined', 'missing Wasm export: _emscripten_stack_alloc');
   assert(typeof wasmExports['emscripten_stack_get_current'] != 'undefined', 'missing Wasm export: emscripten_stack_get_current');
+  assert(typeof wasmExports['__cxa_increment_exception_refcount'] != 'undefined', 'missing Wasm export: __cxa_increment_exception_refcount');
+  assert(typeof wasmExports['__cxa_decrement_exception_refcount'] != 'undefined', 'missing Wasm export: __cxa_decrement_exception_refcount');
+  assert(typeof wasmExports['__get_exception_message'] != 'undefined', 'missing Wasm export: __get_exception_message');
+  assert(typeof wasmExports['__cxa_can_catch'] != 'undefined', 'missing Wasm export: __cxa_can_catch');
+  assert(typeof wasmExports['__cxa_get_exception_ptr'] != 'undefined', 'missing Wasm export: __cxa_get_exception_ptr');
   assert(typeof wasmExports['memory'] != 'undefined', 'missing Wasm export: memory');
   assert(typeof wasmExports['__indirect_function_table'] != 'undefined', 'missing Wasm export: __indirect_function_table');
   _engine_initialize = Module['_engine_initialize'] = createExportWrapper('engine_initialize', 2);
@@ -3269,18 +3397,36 @@ function assignWasmExports(wasmExports) {
   _emscripten_stack_get_base = wasmExports['emscripten_stack_get_base'];
   _strerror = createExportWrapper('strerror', 1);
   _malloc = createExportWrapper('malloc', 1);
+  _free = createExportWrapper('free', 1);
+  _setThrew = createExportWrapper('setThrew', 2);
+  __emscripten_tempret_set = createExportWrapper('_emscripten_tempret_set', 1);
   _emscripten_stack_init = wasmExports['emscripten_stack_init'];
   _emscripten_stack_get_free = wasmExports['emscripten_stack_get_free'];
   __emscripten_stack_restore = wasmExports['_emscripten_stack_restore'];
   __emscripten_stack_alloc = wasmExports['_emscripten_stack_alloc'];
   _emscripten_stack_get_current = wasmExports['emscripten_stack_get_current'];
+  ___cxa_increment_exception_refcount = createExportWrapper('__cxa_increment_exception_refcount', 1);
+  ___cxa_decrement_exception_refcount = createExportWrapper('__cxa_decrement_exception_refcount', 1);
+  ___get_exception_message = createExportWrapper('__get_exception_message', 3);
+  ___cxa_can_catch = createExportWrapper('__cxa_can_catch', 3);
+  ___cxa_get_exception_ptr = createExportWrapper('__cxa_get_exception_ptr', 1);
   memory = wasmMemory = wasmExports['memory'];
   __indirect_function_table = wasmTable = wasmExports['__indirect_function_table'];
 }
 
 var wasmImports = {
   /** @export */
+  __assert_fail: ___assert_fail,
+  /** @export */
+  __cxa_begin_catch: ___cxa_begin_catch,
+  /** @export */
+  __cxa_find_matching_catch_2: ___cxa_find_matching_catch_2,
+  /** @export */
+  __cxa_find_matching_catch_3: ___cxa_find_matching_catch_3,
+  /** @export */
   __cxa_throw: ___cxa_throw,
+  /** @export */
+  __resumeException: ___resumeException,
   /** @export */
   _abort_js: __abort_js,
   /** @export */
@@ -3366,8 +3512,112 @@ var wasmImports = {
   /** @export */
   glVertexAttribPointer: _glVertexAttribPointer,
   /** @export */
-  glViewport: _glViewport
+  glViewport: _glViewport,
+  /** @export */
+  invoke_ii,
+  /** @export */
+  invoke_iii,
+  /** @export */
+  invoke_iiii,
+  /** @export */
+  invoke_v,
+  /** @export */
+  invoke_vi,
+  /** @export */
+  invoke_vii,
+  /** @export */
+  invoke_viii,
+  /** @export */
+  invoke_viiii
 };
+
+function invoke_iiii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_iii(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_ii(index,a1) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_v(index) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)();
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_vi(index,a1) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_vii(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
 
 
 // include: postamble.js
