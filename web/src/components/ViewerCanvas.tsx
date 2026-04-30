@@ -57,7 +57,12 @@ const ViewerCanvas: React.FC<ViewerCanvasProps> = ({ onEngineReady }) => {
 
       // Pass locateFile so Emscripten uses the Vite-resolved hashed WASM URL
       // rather than constructing a bare filename relative to the page origin.
-      const engine = await createEngine({
+      // NOTE: engine must be declared with `let` BEFORE the createEngine call.
+      // onRuntimeInitialized fires synchronously inside createEngine, before
+      // the `await` resolves — accessing a `const` declared after the call
+      // would hit the temporal dead zone and throw a ReferenceError.
+      let engine: ProjectionEngineModule;
+      engine = await createEngine({
         locateFile: (path: string) => path.endsWith('.wasm') ? wasmUrl : path,
         onRuntimeInitialized() {
           if (!isMounted) return;
