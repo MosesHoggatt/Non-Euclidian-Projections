@@ -50,7 +50,15 @@ const ViewerCanvas: React.FC<ViewerCanvasProps> = ({ onEngineReady }) => {
         return;
       }
 
+      // Vite hashes WASM assets (e.g. projection_engine-D8anZNAq.wasm) and puts
+      // them in /assets/. The Emscripten module would otherwise look for the
+      // file at the document root using the un-hashed name and 404. Providing
+      // locateFile via import.meta.url lets Vite statically analyse the path at
+      // build time and rewrite it to the correct hashed URL automatically.
+      const wasmUrl = new URL('../wasm/projection_engine.wasm', import.meta.url).href;
+
       const engine = await createEngine({
+        locateFile: (path: string) => path.endsWith('.wasm') ? wasmUrl : path,
         onRuntimeInitialized() {
           if (!isMounted) return;
 
