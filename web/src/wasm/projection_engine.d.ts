@@ -6,6 +6,11 @@ export interface ProjectionEngineModule {
   // Called by Emscripten when the WASM binary is fully loaded and ready.
   onRuntimeInitialized?: () => void;
 
+  // Emscripten hook: called for every file the module needs to locate.
+  // Return a URL string to override the default path resolution.
+  // Used here to supply the Vite-hashed WASM asset URL via locateFile.
+  locateFile?: (path: string, prefix: string) => string;
+
   // Type-safe wrappers around exported C functions.
   // All parameters must match the C function signatures in main.cpp.
   ccall(
