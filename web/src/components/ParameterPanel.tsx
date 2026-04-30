@@ -77,7 +77,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
         <input
           type="range"
           min={8}
-          max={64}
+          max={256}
           step={4}
           value={parameters.gridDensity}
           onChange={(e) => onGridDensityChange(parseInt(e.target.value, 10))}
