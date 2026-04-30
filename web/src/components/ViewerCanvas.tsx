@@ -1,5 +1,10 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import type { ProjectionEngineModule } from '../wasm/projection_engine';
+// Vite resolves this ?url import to the correct hashed asset path at build time
+// (e.g. /Non-Euclidian-Projections/assets/projection_engine-HASH.wasm).
+// Without this, the Emscripten module falls back to fetching the un-hashed
+// filename from the base URL, which 404s on GitHub Pages.
+import wasmUrl from '../wasm/projection_engine.wasm?url';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  ViewerCanvas.tsx
@@ -50,13 +55,8 @@ const ViewerCanvas: React.FC<ViewerCanvasProps> = ({ onEngineReady }) => {
         return;
       }
 
-      // Vite hashes WASM assets (e.g. projection_engine-D8anZNAq.wasm) and puts
-      // them in /assets/. The Emscripten module would otherwise look for the
-      // file at the document root using the un-hashed name and 404. Providing
-      // locateFile via import.meta.url lets Vite statically analyse the path at
-      // build time and rewrite it to the correct hashed URL automatically.
-      const wasmUrl = new URL('../wasm/projection_engine.wasm', import.meta.url).href;
-
+      // Pass locateFile so Emscripten uses the Vite-resolved hashed WASM URL
+      // rather than constructing a bare filename relative to the page origin.
       const engine = await createEngine({
         locateFile: (path: string) => path.endsWith('.wasm') ? wasmUrl : path,
         onRuntimeInitialized() {
