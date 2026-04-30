@@ -3339,6 +3339,7 @@ var _engine_set_projection = Module['_engine_set_projection'] = makeInvalidEarly
 var _engine_set_grid_density = Module['_engine_set_grid_density'] = makeInvalidEarlyAccess('_engine_set_grid_density');
 var _engine_set_object_type = Module['_engine_set_object_type'] = makeInvalidEarlyAccess('_engine_set_object_type');
 var _engine_set_lit = Module['_engine_set_lit'] = makeInvalidEarlyAccess('_engine_set_lit');
+var _engine_set_adaptive = Module['_engine_set_adaptive'] = makeInvalidEarlyAccess('_engine_set_adaptive');
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
 var _fflush = makeInvalidEarlyAccess('_fflush');
 var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_end');
@@ -3373,6 +3374,7 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['engine_set_grid_density'] != 'undefined', 'missing Wasm export: engine_set_grid_density');
   assert(typeof wasmExports['engine_set_object_type'] != 'undefined', 'missing Wasm export: engine_set_object_type');
   assert(typeof wasmExports['engine_set_lit'] != 'undefined', 'missing Wasm export: engine_set_lit');
+  assert(typeof wasmExports['engine_set_adaptive'] != 'undefined', 'missing Wasm export: engine_set_adaptive');
   assert(typeof wasmExports['main'] != 'undefined', 'missing Wasm export: main');
   assert(typeof wasmExports['fflush'] != 'undefined', 'missing Wasm export: fflush');
   assert(typeof wasmExports['emscripten_stack_get_end'] != 'undefined', 'missing Wasm export: emscripten_stack_get_end');
@@ -3403,6 +3405,7 @@ function assignWasmExports(wasmExports) {
   _engine_set_grid_density = Module['_engine_set_grid_density'] = createExportWrapper('engine_set_grid_density', 1);
   _engine_set_object_type = Module['_engine_set_object_type'] = createExportWrapper('engine_set_object_type', 1);
   _engine_set_lit = Module['_engine_set_lit'] = createExportWrapper('engine_set_lit', 1);
+  _engine_set_adaptive = Module['_engine_set_adaptive'] = createExportWrapper('engine_set_adaptive', 1);
   _main = Module['_main'] = createExportWrapper('main', 2);
   _fflush = createExportWrapper('fflush', 1);
   _emscripten_stack_get_end = wasmExports['emscripten_stack_get_end'];

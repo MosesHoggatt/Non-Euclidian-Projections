@@ -11,6 +11,7 @@ export interface EngineParameters {
   gridDensity: number;
   objectType: number;
   isLit: boolean;
+  isAdaptive: boolean;
 }
 
 interface ParameterPanelProps {
@@ -18,6 +19,7 @@ interface ParameterPanelProps {
   onGridDensityChange: (density: number) => void;
   onObjectTypeChange:  (objectId: number) => void;
   onLitChange:         (isLit: boolean) => void;
+  onAdaptiveChange:    (isAdaptive: boolean) => void;
 }
 
 const OBJECT_TYPES = [
@@ -30,6 +32,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   onGridDensityChange,
   onObjectTypeChange,
   onLitChange,
+  onAdaptiveChange,
 }) => {
   return (
     <div style={styles.container}>
@@ -50,6 +53,21 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
               {obj.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* ── Adaptive mode ─────────────────────────────────────────── */}
+      <div style={styles.group}>
+        <div style={styles.groupLabel}>Adaptive Grid</div>
+        <div style={styles.buttonRow}>
+          <button
+            style={{ ...styles.button, ...(parameters.isAdaptive ? styles.buttonActive : styles.buttonInactive) }}
+            onClick={() => onAdaptiveChange(true)}
+          >On</button>
+          <button
+            style={{ ...styles.button, ...(!parameters.isAdaptive ? styles.buttonActive : styles.buttonInactive) }}
+            onClick={() => onAdaptiveChange(false)}
+          >Off</button>
         </div>
       </div>
 

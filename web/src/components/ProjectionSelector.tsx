@@ -7,7 +7,7 @@ import React from 'react';
 //  engine_set_projection(id) via the WASM module when clicked.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ProjectionId = 0 | 1 | 2 | 3 | 4;
+export type ProjectionId = 0 | 1 | 2 | 3;
 
 export interface ProjectionDefinition {
   id: ProjectionId;
@@ -35,11 +35,6 @@ export const PROJECTIONS: ProjectionDefinition[] = [
     id: 3 as ProjectionId,
     label: 'Mercator',
     description: 'Cylindrical conformal projection. Preserves angles and compass bearings, making it ideal for navigation — but inflates areas near the poles.',
-  },
-  {
-    id: 4 as ProjectionId,
-    label: 'Adaptive',
-    description: 'Camera-centred stereographic projection. Squares near your viewpoint are the least distorted. Rotate the sphere to move the low-distortion region.',
   },
 ];
 

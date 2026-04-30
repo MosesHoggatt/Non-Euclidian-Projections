@@ -31,7 +31,6 @@ enum class ProjectionType : int {
     Stereographic   = 1,
     Gnomonic        = 2,
     Mercator        = 3,
-    ViewAdaptive    = 4,   // camera-centered stereographic, updated per frame
 };
 
 

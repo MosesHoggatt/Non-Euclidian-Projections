@@ -21,7 +21,7 @@
 #include "../projections/StereographicProjection.h"
 #include "../projections/GnomonicProjection.h"
 #include "../projections/MercatorProjection.h"
-#include "../projections/ViewAdaptiveProjection.h"
+// ViewAdaptiveProjection removed — adaptive is now a projection-agnostic toggle
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  bindings/main.cpp
@@ -79,57 +79,61 @@ static const char* FRAGMENT_SHADER_SOURCE =
 "uniform vec3 lightDirection;\n"
 "uniform vec3 lightColor;\n"
 "uniform vec3 ambientColor;\n"
+"uniform vec3 objectColor;\n"
 "uniform float shininess;\n"
 "uniform vec3 cameraWorldPosition;\n"
 "uniform float useLighting;\n"
 "out vec4 fragmentColor;\n"
-// ── value noise hash ────────────────────────────────────────────────────────
-"float hash(vec3 p) {\n"
-"    p = fract(p * vec3(0.1031, 0.1030, 0.0973));\n"
-"    p += dot(p, p.yxz + 33.33);\n"
-"    return fract((p.x + p.y) * p.z);\n"
-"}\n"
-// ── trilinear-interpolated value noise ─────────────────────────────────────
-"float vnoise(vec3 p) {\n"
-"    vec3 i = floor(p); vec3 f = fract(p);\n"
-"    vec3 u = f*f*(3.0-2.0*f);\n"
-"    return mix(\n"
-"        mix(mix(hash(i),              hash(i+vec3(1,0,0)),u.x),\n"
-"            mix(hash(i+vec3(0,1,0)),  hash(i+vec3(1,1,0)),u.x),u.y),\n"
-"        mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)),u.x),\n"
-"            mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)),u.x),u.y),u.z);\n"
-"}\n"
-// ── fractal Brownian motion (7 octaves) ─────────────────────────────────────
-"float fbm(vec3 p) {\n"
-"    float v=0.0; float a=0.5;\n"
-"    for(int i=0;i<7;i++){v+=a*vnoise(p);p=p*2.03+vec3(1.7,9.2,5.3);a*=0.5;}\n"
-"    return v*2.0-1.0;\n"  // remap [0,1] sum → [-1,1]
-"}\n"
-// ── 6-stop terrain palette (t in [0,1]) ─────────────────────────────────────
-"vec3 terrainColor(float t) {\n"
-"    vec3 c;\n"
-"    if     (t<0.28) c=mix(vec3(0.03,0.10,0.38),vec3(0.08,0.30,0.56), t/0.28);\n"
-"    else if(t<0.36) c=mix(vec3(0.08,0.30,0.56),vec3(0.76,0.72,0.52),(t-0.28)/0.08);\n"
-"    else if(t<0.52) c=mix(vec3(0.76,0.72,0.52),vec3(0.20,0.52,0.15),(t-0.36)/0.16);\n"
-"    else if(t<0.67) c=mix(vec3(0.20,0.52,0.15),vec3(0.30,0.25,0.15),(t-0.52)/0.15);\n"
-"    else if(t<0.82) c=mix(vec3(0.30,0.25,0.15),vec3(0.52,0.48,0.45),(t-0.67)/0.15);\n"
-"    else            c=mix(vec3(0.52,0.48,0.45),vec3(0.93,0.95,0.98),(t-0.82)/0.18);\n"
-"    return c;\n"
-"}\n"
 "void main() {\n"
-// continent-scale FBM + fine detail layer
-"    float h = fbm(worldPosition*3.0) + 0.28*fbm(worldPosition*9.5);\n"
-"    float t = clamp(h*0.68+0.50, 0.0, 1.0);\n"
-"    vec3 base = terrainColor(t);\n"
 "    vec3 normal   = normalize(worldNormal);\n"
 "    vec3 toLight  = normalize(lightDirection);\n"
 "    vec3 toCamera = normalize(cameraWorldPosition - worldPosition);\n"
-"    float diff = max(dot(normal, toLight), 0.0);\n"
-"    vec3 hw = normalize(toLight + toCamera);\n"
-// reduced specular so water doesn't over-shine
-"    float spec = pow(max(dot(normal, hw), 0.0), shininess) * 0.18;\n"
+"    float diff    = max(dot(normal, toLight), 0.0);\n"
+"    vec3 hw       = normalize(toLight + toCamera);\n"
+"    float spec    = pow(max(dot(normal, hw), 0.0), shininess) * 0.4;\n"
 "    vec3 lighting = mix(vec3(1.0), ambientColor + diff*lightColor + spec*lightColor, useLighting);\n"
-"    fragmentColor = vec4(base * lighting, 1.0);\n"
+"    fragmentColor = vec4(objectColor * lighting, 1.0);\n"
+"}";
+
+// ── Cell-fill shaders: per-vertex terrain colour baked from C++ noise ────────
+static const char* CELL_FILL_VERTEX_SHADER_SOURCE =
+"#version 300 es\n"
+"precision highp float;\n"
+"layout(location = 0) in vec3 vertexPosition;\n"
+"layout(location = 1) in vec3 vertexColor;\n"
+"uniform mat4 modelMatrix;\n"
+"uniform mat4 viewMatrix;\n"
+"uniform mat4 projectionMatrix;\n"
+"out vec3 fragColor;\n"
+"out vec3 fragWorldPos;\n"
+"void main() {\n"
+"    vec4 wp     = modelMatrix * vec4(vertexPosition, 1.0);\n"
+"    fragWorldPos = wp.xyz;\n"
+"    fragColor    = vertexColor;\n"
+"    gl_Position  = projectionMatrix * viewMatrix * wp;\n"
+"}";
+
+static const char* CELL_FILL_FRAGMENT_SHADER_SOURCE =
+"#version 300 es\n"
+"precision highp float;\n"
+"in vec3 fragColor;\n"
+"in vec3 fragWorldPos;\n"
+"uniform vec3 lightDirection;\n"
+"uniform vec3 lightColor;\n"
+"uniform vec3 ambientColor;\n"
+"uniform float shininess;\n"
+"uniform vec3 cameraWorldPosition;\n"
+"uniform float useLighting;\n"
+"out vec4 fragmentColor;\n"
+"void main() {\n"
+"    vec3 normal   = normalize(fragWorldPos);\n"
+"    vec3 toLight  = normalize(lightDirection);\n"
+"    vec3 toCamera = normalize(cameraWorldPosition - fragWorldPos);\n"
+"    float diff    = max(dot(normal, toLight), 0.0);\n"
+"    vec3 hw       = normalize(toLight + toCamera);\n"
+"    float spec    = pow(max(dot(normal, hw), 0.0), shininess) * 0.18;\n"
+"    vec3 lighting = mix(vec3(1.0), ambientColor + diff*lightColor + spec*lightColor, useLighting);\n"
+"    fragmentColor = vec4(fragColor * lighting, 1.0);\n"
 "}";
 
 // Wireframe overlay uses a simpler single-color shader
@@ -202,8 +206,24 @@ struct EngineState {
     std::unique_ptr<VertexArray>  projectedGridVertexArray;
     int                           projectedGridVertexCount = 0;
 
+    // GPU resources for cell fill quads (terrain color per cell)
+    std::unique_ptr<Shader>       cellFillShader;
+    std::unique_ptr<VertexBuffer> cellFillVertexBuffer;
+    std::unique_ptr<VertexArray>  cellFillVertexArray;
+    int                           cellFillVertexCount = 0;
+
     // Current object type: 0=sphere, 1=torus
     int                           currentObjectType = 0;
+
+    // ── Adaptive mode (camera-travel grid) ───────────────────────────────────
+    bool  isAdaptive          = false;
+    float adaptiveRawOffsetX  = 0.0f;   // accumulated flat-space offset (never wraps)
+    float adaptiveRawOffsetY  = 0.0f;
+    float adaptiveOffsetX     = 0.0f;   // wrapped to [-cellSpacing/2, +cellSpacing/2)
+    float adaptiveOffsetY     = 0.0f;
+    float adaptivePrevTheta   = 0.0f;
+    float adaptivePrevPhi     = 0.0f;
+    bool  adaptiveInitialized = false;
 };
 
 static EngineState* gEngine = nullptr;
@@ -238,6 +258,155 @@ static std::vector<unsigned int> buildWireframeIndices(const std::vector<unsigne
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  C++ terrain noise  (matches the cell-fill palette)
+// ─────────────────────────────────────────────────────────────────────────────
+static float cpuHash(float x, float y) {
+    // Integer-based hash avoids float precision issues across runs
+    int ix = static_cast<int>(std::floor(x * 73.1f + 1234.5f));
+    int iy = static_cast<int>(std::floor(y * 47.3f + 5678.9f));
+    unsigned int h = static_cast<unsigned int>(ix * 1664525 + iy * 1013904223 + 22695477u);
+    h = h * 1664525u + 1013904223u;
+    return static_cast<float>(h & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu);
+}
+static float cpuVnoise(float x, float y) {
+    float ix = std::floor(x), iy = std::floor(y);
+    float fx = x - ix,        fy = y - iy;
+    fx = fx * fx * (3.0f - 2.0f * fx);
+    fy = fy * fy * (3.0f - 2.0f * fy);
+    float v00 = cpuHash(ix,   iy  ), v10 = cpuHash(ix+1, iy  );
+    float v01 = cpuHash(ix,   iy+1), v11 = cpuHash(ix+1, iy+1);
+    return v00 + (v10-v00)*fx + (v01-v00)*fy + (v00-v10-v01+v11)*fx*fy;
+}
+static float cpuFbm(float x, float y) {
+    float v = 0.0f, a = 0.5f, ox = 0.0f, oy = 0.0f;
+    for (int i = 0; i < 5; ++i) {
+        float s = std::pow(2.1f, static_cast<float>(i));
+        v += a * cpuVnoise(x * s + ox, y * s + oy);
+        ox += 1.7f; oy += 9.2f; a *= 0.5f;
+    }
+    return v * 2.0f - 1.0f;
+}
+static Vector3 cpuTerrainColor(float cx, float cy) {
+    float h = cpuFbm(cx * 3.0f, cy * 3.0f) + 0.28f * cpuFbm(cx * 9.5f, cy * 9.5f);
+    float t = std::max(0.0f, std::min(1.0f, h * 0.68f + 0.50f));
+    auto mix3 = [](Vector3 a, Vector3 b, float tt) {
+        return Vector3(a.x + (b.x-a.x)*tt, a.y + (b.y-a.y)*tt, a.z + (b.z-a.z)*tt);
+    };
+    if      (t < 0.28f) return mix3({0.03f,0.10f,0.38f},{0.08f,0.30f,0.56f}, t/0.28f);
+    else if (t < 0.36f) return mix3({0.08f,0.30f,0.56f},{0.76f,0.72f,0.52f}, (t-0.28f)/0.08f);
+    else if (t < 0.52f) return mix3({0.76f,0.72f,0.52f},{0.20f,0.52f,0.15f}, (t-0.36f)/0.16f);
+    else if (t < 0.67f) return mix3({0.20f,0.52f,0.15f},{0.30f,0.25f,0.15f}, (t-0.52f)/0.15f);
+    else if (t < 0.82f) return mix3({0.30f,0.25f,0.15f},{0.52f,0.48f,0.45f}, (t-0.67f)/0.15f);
+    else                return mix3({0.52f,0.48f,0.45f},{0.93f,0.95f,0.98f}, (t-0.82f)/0.18f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Helper: upload cell fill quad mesh to GPU
+//  Each grid cell becomes 2 triangles (6 verts) with:
+//    - position: projected sphere position (updated each frame in adaptive mode)
+//    - color: terrain noise at the cell's FIXED flat-space center (stable across offset changes)
+//  Only generated for the sphere (object 0) — disabled for torus.
+// ─────────────────────────────────────────────────────────────────────────────
+static void uploadCellFillToGPU(EngineState* engine, float offsetX, float offsetY) {
+    if (!engine->currentProjection || engine->currentObjectType != 0) {
+        engine->cellFillVertexCount = 0;
+        return;
+    }
+    const int   lineCount    = std::max(4, engine->gridDensity / 4);
+    const float cellSpacing  = 2.0f / static_cast<float>(lineCount + 1);
+    const float OFFSET       = 1.002f;  // slightly above sphere, below grid lines
+
+    // Format: x,y,z, r,g,b — 6 floats per vertex, 6 verts per cell
+    const int cells = (lineCount + 1) * (lineCount + 1);
+    std::vector<float> verts;
+    verts.reserve(cells * 6 * 6);
+
+    for (int jj = 0; jj <= lineCount; ++jj) {
+        for (int ii = 0; ii <= lineCount; ++ii) {
+            float x0 = -1.0f + ii * cellSpacing;
+            float x1 = x0 + cellSpacing;
+            float y0 = -1.0f + jj * cellSpacing;
+            float y1 = y0 + cellSpacing;
+
+            // Color from noise at the FIXED cell center (independent of adaptive offset)
+            float cx = (x0 + x1) * 0.5f;
+            float cy = (y0 + y1) * 0.5f;
+            Vector3 col = cpuTerrainColor(cx, cy);
+
+            // Project the 4 corners with the current adaptive offset
+            auto proj = [&](float x, float y) -> Vector3 {
+                return engine->currentProjection->mapFlatToSphere(x + offsetX, y + offsetY) * OFFSET;
+            };
+            Vector3 p00 = proj(x0, y0), p10 = proj(x1, y0);
+            Vector3 p01 = proj(x0, y1), p11 = proj(x1, y1);
+
+            auto push = [&](const Vector3& p) {
+                verts.push_back(p.x); verts.push_back(p.y); verts.push_back(p.z);
+                verts.push_back(col.x); verts.push_back(col.y); verts.push_back(col.z);
+            };
+            // Two triangles (CCW)
+            push(p00); push(p10); push(p11);
+            push(p00); push(p11); push(p01);
+        }
+    }
+
+    engine->cellFillVertexCount = static_cast<int>(verts.size() / 6);
+    GLsizeiptr byteSize = static_cast<GLsizeiptr>(verts.size() * sizeof(float));
+
+    if (engine->cellFillVertexBuffer &&
+        static_cast<int>(verts.size()) == engine->cellFillVertexCount * 6) {
+        // Same size: update in-place (fast path)
+        engine->cellFillVertexBuffer->bind();
+        engine->cellFillVertexBuffer->updateData(verts.data(), byteSize);
+        engine->cellFillVertexBuffer->unbind();
+    } else {
+        // Recreate (density or projection changed)
+        engine->cellFillVertexBuffer = std::make_unique<VertexBuffer>(verts.data(), byteSize);
+        engine->cellFillVertexArray  = std::make_unique<VertexArray>();
+        engine->cellFillVertexArray->bind();
+        engine->cellFillVertexBuffer->bind();
+        engine->cellFillVertexArray->addAttributeDescriptor({0, 3, static_cast<GLsizei>(6*sizeof(float)), 0});
+        engine->cellFillVertexArray->addAttributeDescriptor({1, 3, static_cast<GLsizei>(6*sizeof(float)), static_cast<int>(3*sizeof(float))});
+        engine->cellFillVertexArray->unbind();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Helper: update adaptive offset using delta-accumulation for speed matching.
+//  Integrates dTheta/dPhi frame-by-frame so the grid scrolls at exactly the
+//  same apparent speed as the sphere surface.
+// ─────────────────────────────────────────────────────────────────────────────
+static void updateAdaptiveOffset(EngineState* engine, const Vector3& cameraPos) {
+    Vector3 center = cameraPos.normalized();
+    float theta = std::atan2(center.x, center.z);
+    float phi   = std::asin(std::max(-1.0f, std::min(1.0f, center.y)));
+
+    if (engine->adaptiveInitialized) {
+        float dTheta = theta - engine->adaptivePrevTheta;
+        // Wrap delta to [-π, π] to handle the ±π discontinuity
+        while (dTheta >  MathConstants::PI) dTheta -= MathConstants::TWO_PI;
+        while (dTheta < -MathConstants::PI) dTheta += MathConstants::TWO_PI;
+        float dPhi = phi - engine->adaptivePrevPhi;
+
+        // Scale by 1/scale so the flat-space scroll rate matches the inverse
+        // stereographic: moving one sphere-surface cell length ≈ one flat cell.
+        const float scale = 2.5f;
+        engine->adaptiveRawOffsetX += std::cos(phi) * dTheta / scale;
+        engine->adaptiveRawOffsetY += dPhi / scale;
+    }
+    engine->adaptivePrevTheta     = theta;
+    engine->adaptivePrevPhi       = phi;
+    engine->adaptiveInitialized   = true;
+
+    // Wrap to one cell for seamless tiling
+    const int   lineCount   = std::max(4, engine->gridDensity / 4);
+    const float cellSpacing = 2.0f / static_cast<float>(lineCount + 1);
+    const float bias        = 1000.0f * cellSpacing;
+    engine->adaptiveOffsetX = std::fmod(engine->adaptiveRawOffsetX + bias, cellSpacing) - cellSpacing * 0.5f;
+    engine->adaptiveOffsetY = std::fmod(engine->adaptiveRawOffsetY + bias, cellSpacing) - cellSpacing * 0.5f;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Helper: regenerate the flat source grid
 //  Called when grid density changes. The flat grid is independent of the
 //  active projection — it is always a regular 2D grid in [-1, 1]^2.
@@ -258,16 +427,15 @@ static void regenerateFlatGrid(EngineState* engine) {
 static void reprojectGridToGPU(EngineState* engine) {
     if (!engine->currentProjection || engine->flatGridPoints.empty()) return;
 
-    // Small offset places the grid slightly above the sphere surface
-    // to prevent z-fighting with the sphere triangles.
     const float GRID_SURFACE_OFFSET = 1.003f;
+    float ox = engine->isAdaptive ? engine->adaptiveOffsetX : 0.0f;
+    float oy = engine->isAdaptive ? engine->adaptiveOffsetY : 0.0f;
 
-    // Transform each flat 2D grid point to a 3D sphere position.
     std::vector<float> projectedPositions;
     projectedPositions.reserve(engine->flatGridPoints.size() * 3);
 
     for (const Vector2& flatPoint : engine->flatGridPoints) {
-        Vector3 spherePoint = engine->currentProjection->mapFlatToSphere(flatPoint.x, flatPoint.y);
+        Vector3 spherePoint = engine->currentProjection->mapFlatToSphere(flatPoint.x + ox, flatPoint.y + oy);
         projectedPositions.push_back(spherePoint.x * GRID_SURFACE_OFFSET);
         projectedPositions.push_back(spherePoint.y * GRID_SURFACE_OFFSET);
         projectedPositions.push_back(spherePoint.z * GRID_SURFACE_OFFSET);
@@ -440,32 +608,47 @@ static void renderFrame() {
     engine->sphereIndexBuffer->bind();
     glDrawElements(GL_TRIANGLES, engine->sphereIndexCount, GL_UNSIGNED_INT, nullptr);
     engine->sphereIndexBuffer->unbind();
+    engine->sphereVertexArray->unbind();
+    engine->surfaceShader->unbind();
 
-    // ── Update view-adaptive projection every frame ───────────────────────────
-    if (engine->currentProjection &&
-        engine->currentProjection->type() == ProjectionType::ViewAdaptive) {
-        // Camera faces toward the origin; the sphere point it looks at is
-        // in the direction from origin toward the camera.
-        Vector3 facing = cameraPosition.normalized();
-        const int   gridLineCount = std::max(4, engine->gridDensity / 4);
-        const float cellSpacing   = 2.0f / static_cast<float>(gridLineCount + 1);
-        static_cast<ViewAdaptiveProjection*>(engine->currentProjection.get())
-            ->setCenter(facing, cellSpacing);
-        // Update the VBO in-place — same size, just new positions.
-        std::vector<float> projectedPositions;
-        projectedPositions.reserve(engine->flatGridPoints.size() * 3);
-        const float GRID_SURFACE_OFFSET = 1.003f;
+    // ── Adaptive: update offset + rebuild grid + cell fill every frame ────────
+    if (engine->isAdaptive && engine->currentProjection) {
+        updateAdaptiveOffset(engine, cameraPosition);
+        float ox = engine->adaptiveOffsetX;
+        float oy = engine->adaptiveOffsetY;
+        // Update grid line positions
+        std::vector<float> gridPos;
+        gridPos.reserve(engine->flatGridPoints.size() * 3);
+        const float GRID_OFFSET = 1.003f;
         for (const Vector2& fp : engine->flatGridPoints) {
-            Vector3 sp = engine->currentProjection->mapFlatToSphere(fp.x, fp.y);
-            projectedPositions.push_back(sp.x * GRID_SURFACE_OFFSET);
-            projectedPositions.push_back(sp.y * GRID_SURFACE_OFFSET);
-            projectedPositions.push_back(sp.z * GRID_SURFACE_OFFSET);
+            Vector3 sp = engine->currentProjection->mapFlatToSphere(fp.x + ox, fp.y + oy) * GRID_OFFSET;
+            gridPos.push_back(sp.x); gridPos.push_back(sp.y); gridPos.push_back(sp.z);
         }
         engine->projectedGridVertexBuffer->bind();
-        engine->projectedGridVertexBuffer->updateData(
-            projectedPositions.data(),
-            static_cast<GLsizeiptr>(projectedPositions.size() * sizeof(float)));
+        engine->projectedGridVertexBuffer->updateData(gridPos.data(),
+            static_cast<GLsizeiptr>(gridPos.size() * sizeof(float)));
         engine->projectedGridVertexBuffer->unbind();
+        // Update cell fill positions (colors are stable — no recompute)
+        uploadCellFillToGPU(engine, ox, oy);
+    }
+
+    // ── Draw cell fills (terrain coloured quads between grid lines) ───────────
+    if (engine->currentObjectType == 0 && engine->cellFillVertexBuffer &&
+        engine->cellFillVertexCount > 0) {
+        engine->cellFillShader->bind();
+        engine->cellFillShader->setUniformMatrix4("modelMatrix",      Matrix4::identity());
+        engine->cellFillShader->setUniformMatrix4("viewMatrix",       viewMatrix);
+        engine->cellFillShader->setUniformMatrix4("projectionMatrix", projectionMatrix);
+        engine->cellFillShader->setUniformVector3("lightDirection",   Vector3(0.6f, 1.0f, 0.8f).normalized());
+        engine->cellFillShader->setUniformVector3("lightColor",       Vector3(1.0f, 1.0f, 1.0f));
+        engine->cellFillShader->setUniformVector3("ambientColor",     Vector3(0.15f, 0.15f, 0.2f));
+        engine->cellFillShader->setUniformFloat(  "shininess",        48.0f);
+        engine->cellFillShader->setUniformVector3("cameraWorldPosition", cameraPosition);
+        engine->cellFillShader->setUniformFloat(  "useLighting",      engine->useLighting);
+        engine->cellFillVertexArray->bind();
+        glDrawArrays(GL_TRIANGLES, 0, engine->cellFillVertexCount);
+        engine->cellFillVertexArray->unbind();
+        engine->cellFillShader->unbind();
     }
 
     // ── Draw projected grid lines ─────────────────────────────────────────────
@@ -530,8 +713,10 @@ int engine_initialize(int canvasWidth, int canvasHeight) {
     // ── Compile shaders ───────────────────────────────────────────────────────
     gEngine->surfaceShader   = std::make_unique<Shader>(VERTEX_SHADER_SOURCE,   FRAGMENT_SHADER_SOURCE);
     gEngine->wireframeShader = std::make_unique<Shader>(WIREFRAME_VERTEX_SHADER_SOURCE, WIREFRAME_FRAGMENT_SHADER_SOURCE);
+    gEngine->cellFillShader  = std::make_unique<Shader>(CELL_FILL_VERTEX_SHADER_SOURCE, CELL_FILL_FRAGMENT_SHADER_SOURCE);
 
-    if (gEngine->surfaceShader->programId() == 0 || gEngine->wireframeShader->programId() == 0) {
+    if (gEngine->surfaceShader->programId() == 0 || gEngine->wireframeShader->programId() == 0
+        || gEngine->cellFillShader->programId() == 0) {
         printf("[Engine] ERROR: Shader compilation failed (see messages above).\n");
         return 0;
     }
@@ -544,6 +729,7 @@ int engine_initialize(int canvasWidth, int canvasHeight) {
     gEngine->currentProjection = std::make_unique<EquirectangularProjection>();
     regenerateFlatGrid(gEngine);
     reprojectGridToGPU(gEngine);
+    uploadCellFillToGPU(gEngine, 0.0f, 0.0f);
 
     // ── Start render loop ─────────────────────────────────────────────────────
     // 0 fps = run as fast as possible (requestAnimationFrame rate)
@@ -596,16 +782,15 @@ void engine_set_projection(int projectionId) {
         case ProjectionType::Mercator:
             gEngine->currentProjection = std::make_unique<MercatorProjection>();
             break;
-        case ProjectionType::ViewAdaptive:
-            gEngine->currentProjection = std::make_unique<ViewAdaptiveProjection>();
-            break;
         default:
             printf("[Engine] Unknown projection ID: %d\n", projectionId);
             return;
     }
 
-    // Re-project the same flat grid through the new projection.
     reprojectGridToGPU(gEngine);
+    uploadCellFillToGPU(gEngine,
+        gEngine->isAdaptive ? gEngine->adaptiveOffsetX : 0.0f,
+        gEngine->isAdaptive ? gEngine->adaptiveOffsetY : 0.0f);
     printf("[Engine] Projection set to: %s\n", gEngine->currentProjection->name());
 }
 
@@ -613,25 +798,46 @@ EMSCRIPTEN_KEEPALIVE
 void engine_set_grid_density(int density) {
     if (!gEngine) return;
     gEngine->gridDensity = density;
-    // Rebuild mesh AND regenerate the projected grid at the new density
+    // Reset adaptive raw offset so cell count change doesn't cause a jump
+    gEngine->adaptiveInitialized = false;
     uploadObjectToGPU(gEngine);
     regenerateFlatGrid(gEngine);
     reprojectGridToGPU(gEngine);
+    uploadCellFillToGPU(gEngine,
+        gEngine->isAdaptive ? gEngine->adaptiveOffsetX : 0.0f,
+        gEngine->isAdaptive ? gEngine->adaptiveOffsetY : 0.0f);
 }
 
 EMSCRIPTEN_KEEPALIVE
 void engine_set_object_type(int objectId) {
     if (!gEngine) return;
     gEngine->currentObjectType = objectId;
-    // Rebuild the mesh for the new object type.
-    // For sphere, also re-project the grid; for torus, grid projection is N/A.
     uploadObjectToGPU(gEngine);
+    uploadCellFillToGPU(gEngine,
+        gEngine->isAdaptive ? gEngine->adaptiveOffsetX : 0.0f,
+        gEngine->isAdaptive ? gEngine->adaptiveOffsetY : 0.0f);
     printf("[Engine] Object type set to: %d\n", objectId);
 }
 
 EMSCRIPTEN_KEEPALIVE
 void engine_set_lit(int isLit) {
     if (gEngine) gEngine->useLighting = isLit ? 1.0f : 0.0f;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_set_adaptive(int on) {
+    if (!gEngine) return;
+    gEngine->isAdaptive = (on != 0);
+    if (!gEngine->isAdaptive) {
+        // Reset offset so next activation starts fresh
+        gEngine->adaptiveRawOffsetX  = 0.0f;
+        gEngine->adaptiveRawOffsetY  = 0.0f;
+        gEngine->adaptiveOffsetX     = 0.0f;
+        gEngine->adaptiveOffsetY     = 0.0f;
+        gEngine->adaptiveInitialized = false;
+        reprojectGridToGPU(gEngine);
+        uploadCellFillToGPU(gEngine, 0.0f, 0.0f);
+    }
 }
 
 } // extern "C"

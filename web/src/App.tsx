@@ -26,6 +26,7 @@ const App: React.FC = () => {
     gridDensity: 32,
     objectType:  0,
     isLit:       true,
+    isAdaptive:  false,
   });
 
   // ── Engine ready callback ─────────────────────────────────────────────────
@@ -55,6 +56,12 @@ const App: React.FC = () => {
   const handleLitChange = useCallback((isLit: boolean) => {
     setParameters(prev => ({ ...prev, isLit }));
     engineRef.current?.ccall('engine_set_lit', null, ['number'], [isLit ? 1 : 0]);
+  }, []);
+
+  // ── Adaptive toggle ───────────────────────────────────────────────
+  const handleAdaptiveChange = useCallback((isAdaptive: boolean) => {
+    setParameters(prev => ({ ...prev, isAdaptive }));
+    engineRef.current?.ccall('engine_set_adaptive', null, ['number'], [isAdaptive ? 1 : 0]);
   }, []);
   return (
     <div style={styles.appRoot}>
@@ -86,6 +93,7 @@ const App: React.FC = () => {
             onGridDensityChange={handleGridDensityChange}
             onObjectTypeChange={handleObjectTypeChange}
             onLitChange={handleLitChange}
+            onAdaptiveChange={handleAdaptiveChange}
           />
         </div>
 
