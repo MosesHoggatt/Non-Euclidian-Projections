@@ -55,41 +55,37 @@ const ViewerCanvas: React.FC<ViewerCanvasProps> = ({ onEngineReady }) => {
         return;
       }
 
-      // Pass locateFile so Emscripten uses the Vite-resolved hashed WASM URL
-      // rather than constructing a bare filename relative to the page origin.
-      // NOTE: engine must be declared with `let` BEFORE the createEngine call.
-      // onRuntimeInitialized fires synchronously inside createEngine, before
-      // the `await` resolves — accessing a `const` declared after the call
-      // would hit the temporal dead zone and throw a ReferenceError.
-      let engine: ProjectionEngineModule;
-      engine = await createEngine({
+      // Await the fully-initialized module. The Promise returned by createEngine
+      // resolves only AFTER onRuntimeInitialized has been called internally, so
+      // engine.ccall is guaranteed to exist at this point. Using onRuntimeInitialized
+      // as a callback suffers a TDZ/undefined problem because it fires synchronously
+      // during the call, before the `await` can assign the result.
+      const engine = await createEngine({
         locateFile: (path: string) => path.endsWith('.wasm') ? wasmUrl : path,
-        onRuntimeInitialized() {
-          if (!isMounted) return;
-
-          const width  = canvas.clientWidth  || 800;
-          const height = canvas.clientHeight || 600;
-
-          // Set physical pixel dimensions to match the CSS layout size
-          canvas.width  = width;
-          canvas.height = height;
-
-          const success = engine.ccall(
-            'engine_initialize',
-            'number',
-            ['number', 'number'],
-            [width, height]
-          );
-
-          if (success) {
-            engineRef.current = engine;
-            onEngineReady?.(engine);
-            console.log('[ViewerCanvas] Engine initialized.');
-          } else {
-            console.error('[ViewerCanvas] engine_initialize returned failure.');
-          }
-        },
       });
+
+      if (!isMounted) return;
+
+      const width  = canvas.clientWidth  || 800;
+      const height = canvas.clientHeight || 600;
+
+      canvas.width  = width;
+      canvas.height = height;
+
+      const success = engine.ccall(
+        'engine_initialize',
+        'number',
+        ['number', 'number'],
+        [width, height]
+      );
+
+      if (success) {
+        engineRef.current = engine;
+        onEngineReady?.(engine);
+        console.log('[ViewerCanvas] Engine initialized.');
+      } else {
+        console.error('[ViewerCanvas] engine_initialize returned failure.');
+      }
     };
 
     loadEngine();
