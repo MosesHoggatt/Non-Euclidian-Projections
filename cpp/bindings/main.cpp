@@ -412,8 +412,10 @@ static void renderFrame() {
         // Camera faces toward the origin; the sphere point it looks at is
         // in the direction from origin toward the camera.
         Vector3 facing = cameraPosition.normalized();
+        const int   gridLineCount = std::max(4, engine->gridDensity / 4);
+        const float cellSpacing   = 2.0f / static_cast<float>(gridLineCount + 1);
         static_cast<ViewAdaptiveProjection*>(engine->currentProjection.get())
-            ->setCenter(facing);
+            ->setCenter(facing, cellSpacing);
         // Update the VBO in-place — same size, just new positions.
         std::vector<float> projectedPositions;
         projectedPositions.reserve(engine->flatGridPoints.size() * 3);

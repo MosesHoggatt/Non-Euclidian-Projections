@@ -22,22 +22,25 @@
 class ViewAdaptiveProjection : public Projection {
 public:
     // Call once per frame before reprojection.
-    // Stores the camera facing direction for distortion centering AND
-    // computes a flat-space scroll offset from the camera's spherical angle.
-    // This split means:
-    //   • The stereographic distortion minimum stays at the camera center.
-    //   • The grid coordinates travel / shift as the camera orbits, so it
-    //     feels like moving through a fixed non-Euclidean lattice rather than
-    //     having a pattern painted on a window in front of you.
-    void setCenter(const Vector3& cameraFacingPoint) {
+    // cellSpacing = 2.0f / (lineCount + 1) from GridGenerator — the flat-space
+    // distance between adjacent grid lines.  The offset is wrapped to a single
+    // cell so the grid tiles seamlessly: you can orbit indefinitely and never
+    // reach an edge.  The distortion minimum still tracks the camera center.
+    void setCenter(const Vector3& cameraFacingPoint, float cellSpacing) {
         m_center = cameraFacingPoint.normalized();
 
-        // Convert facing direction to spherical angles, then map to [-1, 1]
-        // flat-space offsets.  These scroll the grid as the camera moves.
-        float theta = std::atan2(m_center.x, m_center.z);                          // [-π, π]
-        float phi   = std::asin(std::clamp(m_center.y, -1.0f, 1.0f));              // [-π/2, π/2]
-        m_offsetX   =  theta / MathConstants::PI;                                   // [-1, 1]
-        m_offsetY   =  phi   / MathConstants::HALF_PI;                              // [-1, 1]
+        float theta = std::atan2(m_center.x, m_center.z);               // [−π, +π]
+        float phi   = std::asin(std::clamp(m_center.y, -1.0f, 1.0f));   // [−π/2, +π/2]
+        float rawX  =  theta / MathConstants::PI;                        // [−1, 1]
+        float rawY  =  phi   / MathConstants::HALF_PI;                   // [−1, 1]
+
+        // Wrap to [−cellSpacing/2, +cellSpacing/2) so no point in the shifted
+        // grid ever leaves the safe coverage zone of the stereographic.
+        // fmod can return negative for negative inputs, so bias by a large
+        // positive multiple of cellSpacing first.
+        const float bias = 1000.0f * cellSpacing;
+        m_offsetX = std::fmod(rawX + bias, cellSpacing) - cellSpacing * 0.5f;
+        m_offsetY = std::fmod(rawY + bias, cellSpacing) - cellSpacing * 0.5f;
     }
 
     // Inverse stereographic centred at m_center with a travel offset applied.
