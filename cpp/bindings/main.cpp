@@ -21,6 +21,7 @@
 #include "../projections/StereographicProjection.h"
 #include "../projections/GnomonicProjection.h"
 #include "../projections/MercatorProjection.h"
+#include "../projections/ViewAdaptiveProjection.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  bindings/main.cpp
@@ -81,6 +82,7 @@ static const char* FRAGMENT_SHADER_SOURCE =
 "uniform vec3 objectColor;\n"
 "uniform float shininess;\n"
 "uniform vec3 cameraWorldPosition;\n"
+"uniform float useLighting;\n"
 "out vec4 fragmentColor;\n"
 "void main() {\n"
 "    vec3 normal   = normalize(worldNormal);\n"
@@ -91,7 +93,7 @@ static const char* FRAGMENT_SHADER_SOURCE =
 "    vec3  halfwayVector    = normalize(toLight + toCamera);\n"
 "    float specularStrength = pow(max(dot(normal, halfwayVector), 0.0), shininess);\n"
 "    vec3  specular         = specularStrength * lightColor * 0.4;\n"
-"    vec3 lighting = ambientColor + diffuse + specular;\n"
+"    vec3 lighting = mix(vec3(1.0), ambientColor + diffuse + specular, useLighting);\n"
 "    fragmentColor = vec4(objectColor * lighting, 1.0);\n"
 "}";
 
@@ -148,7 +150,10 @@ struct EngineState {
     float lastMouseY = 0.0f;
 
     // Sphere generation parameters
-    int   gridDensity = 32;      // lat/lon subdivisions
+    int   gridDensity = 32;
+
+    // Rendering options
+    float useLighting = 1.0f;  // 1=lit, 0=unlit flat shading
 
     // ── Projection + grid line system ─────────────────────────────────────────
     // The active projection maps flat [-1,1]^2 grid points to 3D sphere points.
@@ -394,53 +399,54 @@ static void renderFrame() {
     engine->surfaceShader->setUniformVector3("objectColor",       Vector3(0.3f, 0.5f, 0.8f));
     engine->surfaceShader->setUniformFloat(  "shininess",         48.0f);
     engine->surfaceShader->setUniformVector3("cameraWorldPosition", cameraPosition);
+    engine->surfaceShader->setUniformFloat(  "useLighting",       engine->useLighting);
 
     engine->sphereVertexArray->bind();
     engine->sphereIndexBuffer->bind();
     glDrawElements(GL_TRIANGLES, engine->sphereIndexCount, GL_UNSIGNED_INT, nullptr);
     engine->sphereIndexBuffer->unbind();
 
-    // ── Draw wireframe overlay ────────────────────────────────────────────────
-    // GL_POLYGON_OFFSET_LINE does not exist in OpenGL ES 3.0 / WebGL2.
-    // Instead we scale the wireframe sphere very slightly larger than 1.0
-    // (see wireframeModelMatrix below) to prevent z-fighting.
-    Matrix4 wireframeModelMatrix = Transforms::uniformScale(1.002f);
-
-    engine->wireframeShader->bind();
-    engine->wireframeShader->setUniformMatrix4("modelMatrix",      wireframeModelMatrix);
-    engine->wireframeShader->setUniformMatrix4("viewMatrix",       viewMatrix);
-    engine->wireframeShader->setUniformMatrix4("projectionMatrix", projectionMatrix);
-
-    // Soft white wireframe with slight transparency
-    GLint wireColorLoc = glGetUniformLocation(engine->wireframeShader->programId(), "wireframeColor");
-    glUniform4f(wireColorLoc, 0.7f, 0.85f, 1.0f, 0.5f);
-
-    engine->sphereWireframeIndexBuffer->bind();
-    glDrawElements(GL_LINES, engine->wireframeIndexCount, GL_UNSIGNED_INT, nullptr);
-    engine->sphereWireframeIndexBuffer->unbind();
-    engine->sphereVertexArray->unbind();
+    // ── Update view-adaptive projection every frame ───────────────────────────
+    if (engine->currentProjection &&
+        engine->currentProjection->type() == ProjectionType::ViewAdaptive) {
+        // Camera faces toward the origin; the sphere point it looks at is
+        // in the direction from origin toward the camera.
+        Vector3 facing = cameraPosition.normalized();
+        static_cast<ViewAdaptiveProjection*>(engine->currentProjection.get())
+            ->setCenter(facing);
+        // Update the VBO in-place — same size, just new positions.
+        std::vector<float> projectedPositions;
+        projectedPositions.reserve(engine->flatGridPoints.size() * 3);
+        const float GRID_SURFACE_OFFSET = 1.003f;
+        for (const Vector2& fp : engine->flatGridPoints) {
+            Vector3 sp = engine->currentProjection->mapFlatToSphere(fp.x, fp.y);
+            projectedPositions.push_back(sp.x * GRID_SURFACE_OFFSET);
+            projectedPositions.push_back(sp.y * GRID_SURFACE_OFFSET);
+            projectedPositions.push_back(sp.z * GRID_SURFACE_OFFSET);
+        }
+        engine->projectedGridVertexBuffer->bind();
+        engine->projectedGridVertexBuffer->updateData(
+            projectedPositions.data(),
+            static_cast<GLsizeiptr>(projectedPositions.size() * sizeof(float)));
+        engine->projectedGridVertexBuffer->unbind();
+    }
 
     // ── Draw projected grid lines ─────────────────────────────────────────────
-    // The grid uses the same wireframe shader but with the projection-specific
-    // color. Model matrix is identity (grid sits on unit sphere surface + offset).
     if (engine->currentObjectType == 0 && engine->projectedGridVertexBuffer && engine->projectedGridVertexCount > 0) {
-        // Use the projection's color for the grid lines
         Vector3 gridColorRGB = engine->currentProjection->gridColor();
 
-        engine->wireframeShader->setUniformMatrix4("modelMatrix", Matrix4::identity());
-        // viewMatrix and projectionMatrix are already set from wireframe draw above
-
-        glUniform4f(wireColorLoc,
-            gridColorRGB.x, gridColorRGB.y, gridColorRGB.z,
-            1.0f  // fully opaque
-        );
+        engine->wireframeShader->bind();
+        engine->wireframeShader->setUniformMatrix4("viewMatrix",       viewMatrix);
+        engine->wireframeShader->setUniformMatrix4("projectionMatrix", projectionMatrix);
+        engine->wireframeShader->setUniformMatrix4("modelMatrix",      Matrix4::identity());
+        GLint wireColorLoc = glGetUniformLocation(engine->wireframeShader->programId(), "wireframeColor");
+        glUniform4f(wireColorLoc, gridColorRGB.x, gridColorRGB.y, gridColorRGB.z, 1.0f);
 
         engine->projectedGridVertexArray->bind();
         glDrawArrays(GL_LINES, 0, engine->projectedGridVertexCount);
         engine->projectedGridVertexArray->unbind();
+        engine->wireframeShader->unbind();
     }
-
-    engine->wireframeShader->unbind();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -553,6 +559,9 @@ void engine_set_projection(int projectionId) {
         case ProjectionType::Mercator:
             gEngine->currentProjection = std::make_unique<MercatorProjection>();
             break;
+        case ProjectionType::ViewAdaptive:
+            gEngine->currentProjection = std::make_unique<ViewAdaptiveProjection>();
+            break;
         default:
             printf("[Engine] Unknown projection ID: %d\n", projectionId);
             return;
@@ -581,6 +590,11 @@ void engine_set_object_type(int objectId) {
     // For sphere, also re-project the grid; for torus, grid projection is N/A.
     uploadObjectToGPU(gEngine);
     printf("[Engine] Object type set to: %d\n", objectId);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void engine_set_lit(int isLit) {
+    if (gEngine) gEngine->useLighting = isLit ? 1.0f : 0.0f;
 }
 
 } // extern "C"

@@ -30,8 +30,10 @@ enum class ProjectionType : int {
     Equirectangular = 0,
     Stereographic   = 1,
     Gnomonic        = 2,
-    Mercator        = 3
+    Mercator        = 3,
+    ViewAdaptive    = 4,   // camera-centered stereographic, updated per frame
 };
+
 
 class Projection {
 public:

@@ -2143,6 +2143,15 @@ async function createWasm() {
     };
   var _glBufferData = _emscripten_glBufferData;
 
+  var _emscripten_glBufferSubData = (target, offset, size, data) => {
+      if (GL.currentContext.version >= 2) {
+        size && GLctx.bufferSubData(target, offset, HEAPU8, data, size);
+        return;
+      }
+      GLctx.bufferSubData(target, offset, HEAPU8.subarray(data, data+size));
+    };
+  var _glBufferSubData = _emscripten_glBufferSubData;
+
   var _emscripten_glClear = (x0) => GLctx.clear(x0);
   var _glClear = _emscripten_glClear;
 
@@ -3329,6 +3338,7 @@ var _engine_on_resize = Module['_engine_on_resize'] = makeInvalidEarlyAccess('_e
 var _engine_set_projection = Module['_engine_set_projection'] = makeInvalidEarlyAccess('_engine_set_projection');
 var _engine_set_grid_density = Module['_engine_set_grid_density'] = makeInvalidEarlyAccess('_engine_set_grid_density');
 var _engine_set_object_type = Module['_engine_set_object_type'] = makeInvalidEarlyAccess('_engine_set_object_type');
+var _engine_set_lit = Module['_engine_set_lit'] = makeInvalidEarlyAccess('_engine_set_lit');
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
 var _fflush = makeInvalidEarlyAccess('_fflush');
 var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_end');
@@ -3362,6 +3372,7 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['engine_set_projection'] != 'undefined', 'missing Wasm export: engine_set_projection');
   assert(typeof wasmExports['engine_set_grid_density'] != 'undefined', 'missing Wasm export: engine_set_grid_density');
   assert(typeof wasmExports['engine_set_object_type'] != 'undefined', 'missing Wasm export: engine_set_object_type');
+  assert(typeof wasmExports['engine_set_lit'] != 'undefined', 'missing Wasm export: engine_set_lit');
   assert(typeof wasmExports['main'] != 'undefined', 'missing Wasm export: main');
   assert(typeof wasmExports['fflush'] != 'undefined', 'missing Wasm export: fflush');
   assert(typeof wasmExports['emscripten_stack_get_end'] != 'undefined', 'missing Wasm export: emscripten_stack_get_end');
@@ -3391,6 +3402,7 @@ function assignWasmExports(wasmExports) {
   _engine_set_projection = Module['_engine_set_projection'] = createExportWrapper('engine_set_projection', 1);
   _engine_set_grid_density = Module['_engine_set_grid_density'] = createExportWrapper('engine_set_grid_density', 1);
   _engine_set_object_type = Module['_engine_set_object_type'] = createExportWrapper('engine_set_object_type', 1);
+  _engine_set_lit = Module['_engine_set_lit'] = createExportWrapper('engine_set_lit', 1);
   _main = Module['_main'] = createExportWrapper('main', 2);
   _fflush = createExportWrapper('fflush', 1);
   _emscripten_stack_get_end = wasmExports['emscripten_stack_get_end'];
@@ -3453,6 +3465,8 @@ var wasmImports = {
   glBlendFunc: _glBlendFunc,
   /** @export */
   glBufferData: _glBufferData,
+  /** @export */
+  glBufferSubData: _glBufferSubData,
   /** @export */
   glClear: _glClear,
   /** @export */

@@ -8,14 +8,16 @@ import React from 'react';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface EngineParameters {
-  gridDensity: number;   // sphere mesh lat/lon subdivisions (8 – 64)
-  objectType: number;    // 0=sphere, 1=torus, 2=hyperboloid
+  gridDensity: number;
+  objectType: number;
+  isLit: boolean;
 }
 
 interface ParameterPanelProps {
   parameters: EngineParameters;
   onGridDensityChange: (density: number) => void;
   onObjectTypeChange:  (objectId: number) => void;
+  onLitChange:         (isLit: boolean) => void;
 }
 
 const OBJECT_TYPES = [
@@ -27,6 +29,7 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
   parameters,
   onGridDensityChange,
   onObjectTypeChange,
+  onLitChange,
 }) => {
   return (
     <div style={styles.container}>
@@ -47,6 +50,21 @@ const ParameterPanel: React.FC<ParameterPanelProps> = ({
               {obj.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* ── Shading ───────────────────────────────────────────────────── */}
+      <div style={styles.group}>
+        <div style={styles.groupLabel}>Shading</div>
+        <div style={styles.buttonRow}>
+          <button
+            style={{ ...styles.button, ...(parameters.isLit ? styles.buttonActive : styles.buttonInactive) }}
+            onClick={() => onLitChange(true)}
+          >Lit</button>
+          <button
+            style={{ ...styles.button, ...(!parameters.isLit ? styles.buttonActive : styles.buttonInactive) }}
+            onClick={() => onLitChange(false)}
+          >Unlit</button>
         </div>
       </div>
 

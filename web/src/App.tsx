@@ -25,6 +25,7 @@ const App: React.FC = () => {
   const [parameters, setParameters] = useState<EngineParameters>({
     gridDensity: 32,
     objectType:  0,
+    isLit:       true,
   });
 
   // ── Engine ready callback ─────────────────────────────────────────────────
@@ -50,7 +51,11 @@ const App: React.FC = () => {
     setParameters(prev => ({ ...prev, objectType: objectId }));
     engineRef.current?.ccall('engine_set_object_type', null, ['number'], [objectId]);
   }, []);
-
+  // ── Lit toggle ───────────────────────────────────────────────────
+  const handleLitChange = useCallback((isLit: boolean) => {
+    setParameters(prev => ({ ...prev, isLit }));
+    engineRef.current?.ccall('engine_set_lit', null, ['number'], [isLit ? 1 : 0]);
+  }, []);
   return (
     <div style={styles.appRoot}>
 
@@ -80,6 +85,7 @@ const App: React.FC = () => {
             parameters={parameters}
             onGridDensityChange={handleGridDensityChange}
             onObjectTypeChange={handleObjectTypeChange}
+            onLitChange={handleLitChange}
           />
         </div>
 

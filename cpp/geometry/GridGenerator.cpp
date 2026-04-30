@@ -11,15 +11,14 @@ std::vector<Vector2> GridGenerator::generateGrid(int lineCount, int segmentsPerL
     // Total vertices = 2 directions × lineCount lines × segmentsPerLine × 2 vertices.
     flatPoints.reserve(2 * lineCount * segmentsPerLine * 2);
 
-    // Spacing between lines: divide the [-1, 1] range into (lineCount + 1) gaps
-    // so lines are symmetric around 0 and never fall exactly on the boundaries.
+    // Spacing between lines: divide the [-1, 1] range into (lineCount + 1) gaps,
+    // then also include lines at the boundaries ±1.
+    // Lines sit at: -1, -1+spacing, ..., 0, ..., 1-spacing, 1
     const float lineSpacing   = 2.0f / static_cast<float>(lineCount + 1);
     const float segmentLength = 2.0f / static_cast<float>(segmentsPerLine);
 
     // ── Horizontal lines (constant Y) ─────────────────────────────────────────
-    // These map to latitude circles on the sphere (or their projected equivalent).
-    for (int lineIndex = 1; lineIndex <= lineCount; ++lineIndex) {
-        // Symmetric placement: lines at -(lineCount/2)..0..+(lineCount/2)
+    for (int lineIndex = 0; lineIndex <= lineCount + 1; ++lineIndex) {
         float constantY = -1.0f + static_cast<float>(lineIndex) * lineSpacing;
 
         for (int segIndex = 0; segIndex < segmentsPerLine; ++segIndex) {
@@ -32,8 +31,7 @@ std::vector<Vector2> GridGenerator::generateGrid(int lineCount, int segmentsPerL
     }
 
     // ── Vertical lines (constant X) ───────────────────────────────────────────
-    // These map to longitude meridians on the sphere (or their projected equivalent).
-    for (int lineIndex = 1; lineIndex <= lineCount; ++lineIndex) {
+    for (int lineIndex = 0; lineIndex <= lineCount + 1; ++lineIndex) {
         float constantX = -1.0f + static_cast<float>(lineIndex) * lineSpacing;
 
         for (int segIndex = 0; segIndex < segmentsPerLine; ++segIndex) {

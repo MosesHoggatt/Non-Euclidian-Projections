@@ -30,6 +30,7 @@ if (EMSCRIPTEN)
         "_engine_set_projection"
         "_engine_set_grid_density"
         "_engine_set_object_type"
+        "_engine_set_lit"
         "_main"
     )
     string(JOIN "," EXPORTED_FUNCTIONS_STR ${EXPORTED_FUNCTIONS})
