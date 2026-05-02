@@ -224,9 +224,25 @@ struct EngineState {
     float adaptivePrevTheta   = 0.0f;
     float adaptivePrevPhi     = 0.0f;
     bool  adaptiveInitialized = false;
+    Vector3 adaptiveCameraFacing{0.0f, 0.0f, -1.0f}; // camera-facing unit vector
 };
 
 static EngineState* gEngine = nullptr;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Rotate vector v so that Y-axis (0,1,0) maps to `target` (Rodrigues).
+//  Applied after flat→sphere projection to keep coverage centred on camera.
+// ─────────────────────────────────────────────────────────────────────────────
+static Vector3 rotateNorthToDir(const Vector3& v, const Vector3& target) {
+    const Vector3 north(0.0f, 1.0f, 0.0f);
+    float d = north.dot(target);
+    if (d >  0.9999f) return v;
+    if (d < -0.9999f) return Vector3(v.x, -v.y, v.z);
+    Vector3 axis  = north.cross(target).normalized();
+    float   angle = std::acos(std::max(-1.0f, std::min(1.0f, d)));
+    Matrix4 rot   = Transforms::rotationAroundAxis(axis, angle);
+    return rot.transformDirection(v);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Helper: build wireframe indices from triangle indices
@@ -333,9 +349,12 @@ static void uploadCellFillToGPU(EngineState* engine, float offsetX, float offset
             float cy = (y0 + y1) * 0.5f;
             Vector3 col = cpuTerrainColor(cx, cy);
 
-            // Project the 4 corners with the current adaptive offset
+            // Project the 4 corners with adaptive offset + camera-facing rotation
             auto proj = [&](float x, float y) -> Vector3 {
-                return engine->currentProjection->mapFlatToSphere(x + offsetX, y + offsetY) * OFFSET;
+                Vector3 sp = engine->currentProjection->mapFlatToSphere(x + offsetX, y + offsetY);
+                if (engine->isAdaptive)
+                    sp = rotateNorthToDir(sp, engine->adaptiveCameraFacing);
+                return sp * OFFSET;
             };
             Vector3 p00 = proj(x0, y0), p10 = proj(x1, y0);
             Vector3 p01 = proj(x0, y1), p11 = proj(x1, y1);
@@ -397,6 +416,10 @@ static void updateAdaptiveOffset(EngineState* engine, const Vector3& cameraPos) 
     engine->adaptivePrevTheta     = theta;
     engine->adaptivePrevPhi       = phi;
     engine->adaptiveInitialized   = true;
+    engine->adaptiveCameraFacing  = Vector3(
+        std::cos(phi) * std::sin(theta),
+        std::sin(phi),
+        std::cos(phi) * std::cos(theta)).normalized();
 
     // Wrap to one cell for seamless tiling
     const int   lineCount   = std::max(4, engine->gridDensity / 4);
@@ -435,10 +458,12 @@ static void reprojectGridToGPU(EngineState* engine) {
     projectedPositions.reserve(engine->flatGridPoints.size() * 3);
 
     for (const Vector2& flatPoint : engine->flatGridPoints) {
-        Vector3 spherePoint = engine->currentProjection->mapFlatToSphere(flatPoint.x + ox, flatPoint.y + oy);
-        projectedPositions.push_back(spherePoint.x * GRID_SURFACE_OFFSET);
-        projectedPositions.push_back(spherePoint.y * GRID_SURFACE_OFFSET);
-        projectedPositions.push_back(spherePoint.z * GRID_SURFACE_OFFSET);
+        Vector3 sp = engine->currentProjection->mapFlatToSphere(flatPoint.x + ox, flatPoint.y + oy);
+        if (engine->isAdaptive)
+            sp = rotateNorthToDir(sp, engine->adaptiveCameraFacing);
+        projectedPositions.push_back(sp.x * GRID_SURFACE_OFFSET);
+        projectedPositions.push_back(sp.y * GRID_SURFACE_OFFSET);
+        projectedPositions.push_back(sp.z * GRID_SURFACE_OFFSET);
     }
 
     engine->projectedGridVertexCount = static_cast<int>(engine->flatGridPoints.size());
@@ -611,18 +636,22 @@ static void renderFrame() {
     engine->sphereVertexArray->unbind();
     engine->surfaceShader->unbind();
 
-    // ── Adaptive: update offset + rebuild grid + cell fill every frame ────────
+    // ── Adaptive: update offset + facing, rebuild grid + cell fill every frame ─
     if (engine->isAdaptive && engine->currentProjection) {
         updateAdaptiveOffset(engine, cameraPosition);
         float ox = engine->adaptiveOffsetX;
         float oy = engine->adaptiveOffsetY;
+        const Vector3& facing = engine->adaptiveCameraFacing;
         // Update grid line positions
         std::vector<float> gridPos;
         gridPos.reserve(engine->flatGridPoints.size() * 3);
         const float GRID_OFFSET = 1.003f;
         for (const Vector2& fp : engine->flatGridPoints) {
-            Vector3 sp = engine->currentProjection->mapFlatToSphere(fp.x + ox, fp.y + oy) * GRID_OFFSET;
-            gridPos.push_back(sp.x); gridPos.push_back(sp.y); gridPos.push_back(sp.z);
+            Vector3 sp = engine->currentProjection->mapFlatToSphere(fp.x + ox, fp.y + oy);
+            sp = rotateNorthToDir(sp, facing);
+            gridPos.push_back(sp.x * GRID_OFFSET);
+            gridPos.push_back(sp.y * GRID_OFFSET);
+            gridPos.push_back(sp.z * GRID_OFFSET);
         }
         engine->projectedGridVertexBuffer->bind();
         engine->projectedGridVertexBuffer->updateData(gridPos.data(),
